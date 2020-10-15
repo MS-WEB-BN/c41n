@@ -15,7 +15,7 @@ Dependencies can also be installed manually (without the script) with apt-get pa
 ```
 # sudo apt-get install net-tools hostapd dnsmasq tcpflow
 ```
-and pacman (Arch and Arch based distributions)
+and pacman (Arch and Arch based distributions):
 ```
 # sudo pacman -Sy net-tools hostapd dnsmasq tcpflow
 ```
