@@ -4,16 +4,20 @@
 **c41n** provides automated setup of several types of Rogue Access Points, and Evil Twin attacks. **c41n** sets up an access point with user defined characteristics (interface, name and channel for the access point), sets up DHCP server for the access point, and provides user with abilities of HTTP traffic sniffing, or Captive Portal setup with credential sniffing. 
 
 # Installation:
-Installation consists of cloning the repo, running a script that will install dependencies , and making **c41n** executable. Script only works with apt package manager (Debian based distributions). 
+Installation consists of cloning the repo, running a script that will install dependencies, or install them manually, and making **c41n** executable. Installation script works with apt and pacman package managers (Debian and Arch only). 
 ```
 # git clone https://github.com/MS-WEB-BN/c41n/
 # cd c41n
 # sudo bash install.sh
 # sudo chmod +x c41n
 ```
-Dependencies can also be installed manually (without the script) with apt-get package manager (Debian based distributions):
+Dependencies can also be installed manually (without the script) with apt-get package manager (Debian and Debian based distributions):
 ```
 # sudo apt-get install net-tools hostapd dnsmasq tcpflow
+```
+and pacman (Arch and Arch based distributions)
+```
+# sudo pacman -Sy net-tools hostapd dnsmasq tcpflow
 ```
 
 # Usage:
