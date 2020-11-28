@@ -70,8 +70,10 @@ domains_file: Redirects predefined domains + domains from specified file (separa
 # ./c41n captive wlp6s0 eth1 router 9 /home/name/Documents/domains.txt
 ```
 
-# Screenshot:
-![Start](https://i.ibb.co/rH8hykc/screenshot.png)
+# Screenshots:
+
+![1](https://i.ibb.co/w7bTzpJ/c41n-arch.png)
+![2](https://i.ibb.co/rH8hykc/screenshot.png)
 
 # License:
 
