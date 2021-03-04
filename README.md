@@ -73,7 +73,7 @@ domains_file: Redirects predefined domains + domains from specified file (separa
 # Screenshots:
 
 ![1](https://i.ibb.co/w7bTzpJ/c41n-arch.png)
-<!---![2](https://i.ibb.co/rH8hykc/screenshot.png)-->
+![2](https://i.ibb.co/rH8hykc/screenshot.png)
 
 # License:
 
